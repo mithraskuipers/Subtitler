@@ -1,0 +1,9 @@
+# Requires Python 3.12 - pydantic-core/av do not yet ship Windows wheels
+# for 3.13/3.14, which forces a source build that fails without Rust/FFmpeg
+# dev headers installed. start_app.bat enforces this automatically.
+fastapi==0.115.0
+uvicorn[standard]==0.30.6
+pydantic==2.9.2
+faster-whisper==1.0.3
+imageio-ffmpeg==0.5.1
+python-multipart==0.0.9

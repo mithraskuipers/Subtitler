@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Subtitler</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/assets/style.css" />
+</head>
+<body>
+<div class="app-shell">
+
+  <header class="titlebar">
+    <div class="titlebar-left">
+      <div class="brand-mark" aria-hidden="true">
+        <svg viewBox="0 0 32 32" width="22" height="22">
+          <rect x="2" y="7" width="28" height="18" rx="3" fill="none" stroke="currentColor" stroke-width="2"/>
+          <path d="M7 20h6M15 20h4M21 20h4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+        </svg>
+      </div>
+      <div class="brand-text">
+        <h1>Subtitler</h1>
+        <span class="brand-sub">Batch Dutch transcription</span>
+      </div>
+    </div>
+    <div class="titlebar-right">
+      <div class="pill" id="device-pill">
+        <span class="pill-dot" id="device-dot"></span>
+        <span id="device-label">Model not loaded</span>
+      </div>
+      <div class="pill" id="connection-pill">
+        <span class="pill-dot" id="connection-dot"></span>
+        <span id="connection-label">Connecting…</span>
+      </div>
+    </div>
+  </header>
+
+  <div class="layout">
+
+    <aside class="control-panel">
+      <section class="panel-block">
+        <h2 class="panel-title">Source folder</h2>
+        <div class="folder-row">
+          <input id="folder-input" type="text" placeholder="No folder selected" spellcheck="false" />
+          <button id="browse-btn" class="btn btn-ghost" type="button">Browse…</button>
+        </div>
+        <button id="scan-btn" class="btn btn-secondary btn-block" type="button">Scan folder</button>
+      </section>
+
+      <section class="panel-block">
+        <h2 class="panel-title">Language</h2>
+        <select id="language-select" class="select"></select>
+      </section>
+
+      <section class="panel-block">
+        <div class="video-section-header">
+          <h2 class="panel-title">Models</h2>
+          <button id="refresh-models-btn" class="btn btn-tiny" type="button">Refresh</button>
+        </div>
+        <div id="models-list" class="models-list"></div>
+      </section>
+
+      <section class="panel-block">
+        <h2 class="panel-title">Batch controls</h2>
+        <div class="controls-row">
+          <button id="run-btn" class="btn btn-primary btn-block" type="button" disabled>
+            <svg viewBox="0 0 24 24" width="16" height="16"><path d="M6 4l14 8-14 8V4z" fill="currentColor"/></svg>
+            Run batch
+          </button>
+          <button id="stop-btn" class="btn btn-danger btn-block" type="button" disabled>
+            <svg viewBox="0 0 24 24" width="16" height="16"><rect x="5" y="5" width="14" height="14" rx="2" fill="currentColor"/></svg>
+            Stop
+          </button>
+        </div>
+      </section>
+
+      <section class="panel-block progress-block">
+        <h2 class="panel-title">Overall progress</h2>
+        <div class="progress-track">
+          <div class="progress-fill" id="overall-progress-fill"></div>
+        </div>
+        <div class="progress-meta">
+          <span id="overall-progress-label">0 / 0 videos</span>
+        </div>
+        <div class="time-grid">
+          <div class="time-cell">
+            <span class="time-label">Elapsed</span>
+            <span class="time-value" id="elapsed-value">00:00:00</span>
+          </div>
+          <div class="time-cell">
+            <span class="time-label">Remaining (est.)</span>
+            <span class="time-value" id="remaining-value">—</span>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel-block current-block">
+        <h2 class="panel-title">Current video</h2>
+        <div class="current-name" id="current-video-name">Idle</div>
+        <div class="stage-track">
+          <div class="stage-fill" id="stage-fill"></div>
+        </div>
+        <div class="stage-label" id="stage-label">Waiting for a batch to start</div>
+      </section>
+    </aside>
+
+    <main class="main-panel">
+      <section class="video-section">
+        <div class="video-section-header">
+          <h2 class="panel-title">Videos</h2>
+          <div class="select-actions">
+            <button id="select-all-btn" class="btn btn-tiny" type="button">Select all</button>
+            <button id="select-none-btn" class="btn btn-tiny" type="button">Select none</button>
+          </div>
+        </div>
+        <div class="video-table-wrap">
+          <table class="video-table">
+            <thead>
+              <tr>
+                <th class="col-check"></th>
+                <th>Filename</th>
+                <th>Path</th>
+                <th class="col-size">Size</th>
+                <th class="col-status">Status</th>
+              </tr>
+            </thead>
+            <tbody id="video-table-body">
+              <tr class="empty-row"><td colspan="5">No videos yet — scan a folder to get started.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="console-section">
+        <div class="console-header">
+          <span class="console-title">Live log</span>
+          <span class="console-caret" aria-hidden="true">●</span>
+        </div>
+        <div class="console-body" id="console-body"></div>
+      </section>
+    </main>
+
+  </div>
+</div>
+
+<div class="modal-overlay hidden" id="interrupt-modal">
+  <div class="modal">
+    <h3>Batch stopped mid-video</h3>
+    <p>
+      Processing of <strong id="interrupt-filename">this video</strong> was interrupted.
+      A partial subtitle file was created. What would you like to do with it?
+    </p>
+    <div class="modal-actions">
+      <button id="interrupt-delete-btn" class="btn btn-ghost" type="button">Delete partial file</button>
+      <button id="interrupt-keep-btn" class="btn btn-primary" type="button">Keep partial file</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay hidden" id="summary-modal">
+  <div class="modal modal-wide">
+    <h3>Batch summary</h3>
+    <div class="summary-grid">
+      <div class="summary-card summary-success">
+        <span class="summary-count" id="summary-success-count">0</span>
+        <span class="summary-label">Successful</span>
+      </div>
+      <div class="summary-card summary-failed">
+        <span class="summary-count" id="summary-failed-count">0</span>
+        <span class="summary-label">Failed</span>
+      </div>
+      <div class="summary-card summary-skipped">
+        <span class="summary-count" id="summary-skipped-count">0</span>
+        <span class="summary-label">Skipped</span>
+      </div>
+      <div class="summary-card summary-time">
+        <span class="summary-count" id="summary-time-count">0:00</span>
+        <span class="summary-label">Total time</span>
+      </div>
+    </div>
+    <div class="summary-details" id="summary-details"></div>
+    <div class="modal-actions">
+      <button id="summary-close-btn" class="btn btn-primary" type="button">Close</button>
+    </div>
+  </div>
+</div>
+
+<script src="/assets/app.js"></script>
+</body>
+</html>
