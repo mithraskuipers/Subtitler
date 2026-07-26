@@ -193,6 +193,13 @@ button, input, select {
 }
 .select:focus { outline: none; border-color: var(--accent); }
 
+.device-hint {
+  font-size: 11px;
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+.device-hint.warning { color: var(--danger); }
+
 /* Buttons */
 .btn {
   display: inline-flex;

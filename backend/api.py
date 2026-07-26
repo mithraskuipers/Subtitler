@@ -20,6 +20,7 @@ from .model_manager import (
 )
 from .models import BatchStatus, LogLevel
 from .state import AppState
+from .transcription_engine import cuda_available
 from .websocket_manager import ConnectionManager
 
 router = APIRouter()
@@ -44,6 +45,7 @@ class SelectAllRequest(BaseModel):
 
 class StartRequest(BaseModel):
     languageCode: str
+    devicePreference: str = "auto"
 
 
 class InterruptDecisionRequest(BaseModel):
@@ -123,6 +125,18 @@ def get_languages() -> list[dict[str, str]]:
     return [{"code": lang.code, "label": lang.label} for lang in SUPPORTED_LANGUAGES]
 
 
+@router.get("/api/device-options")
+def get_device_options() -> dict:
+    return {
+        "options": [
+            {"value": "auto", "label": "Auto (recommended)"},
+            {"value": "gpu", "label": "GPU (CUDA)"},
+            {"value": "cpu", "label": "CPU"},
+        ],
+        "gpuAvailable": cuda_available(),
+    }
+
+
 @router.get("/api/state")
 def get_state() -> dict:
     return state.snapshot()
@@ -169,8 +183,10 @@ def start_batch(payload: StartRequest) -> dict:
     valid_codes = {lang.code for lang in SUPPORTED_LANGUAGES}
     if payload.languageCode not in valid_codes:
         raise HTTPException(status_code=400, detail="Unsupported language.")
+    if payload.devicePreference not in ("auto", "gpu", "cpu"):
+        raise HTTPException(status_code=400, detail="Unsupported processing device.")
     try:
-        batch_processor.start(payload.languageCode)
+        batch_processor.start(payload.languageCode, payload.devicePreference)
     except RuntimeError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     return state.snapshot()

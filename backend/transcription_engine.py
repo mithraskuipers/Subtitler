@@ -46,8 +46,8 @@ def _gpu_device_name() -> str:
         return "CUDA GPU"
 
 
-def detect_device(config: TranscriptionConfig) -> DeviceInfo:
-    """Detect whether a CUDA GPU is usable, falling back to CPU otherwise.
+def cuda_available() -> bool:
+    """Whether a CUDA-capable GPU is usable via ctranslate2.
 
     Detection goes through ctranslate2 (the runtime faster-whisper is built
     on) so no additional heavyweight dependency such as torch is required
@@ -57,12 +57,33 @@ def detect_device(config: TranscriptionConfig) -> DeviceInfo:
     try:
         import ctranslate2
 
-        if ctranslate2.get_cuda_device_count() > 0:
-            return DeviceInfo(device="cuda", compute_type=config.compute_type_gpu, device_name=_gpu_device_name())
+        return ctranslate2.get_cuda_device_count() > 0
     except Exception:
-        # ctranslate2 missing or CUDA not usable - fall back to CPU below.
-        pass
+        # ctranslate2 missing or CUDA not usable.
+        return False
 
+
+def detect_device(config: TranscriptionConfig, preference: str = "auto") -> DeviceInfo:
+    """Resolve which device to run on, honouring an explicit user preference.
+
+    ``preference`` is one of ``"auto"`` (GPU if available, otherwise CPU),
+    ``"gpu"`` (force CUDA, raising if unavailable) or ``"cpu"`` (force CPU
+    even if a GPU is present).
+    """
+
+    if preference == "cpu":
+        return DeviceInfo(device="cpu", compute_type=config.compute_type_cpu, device_name="CPU")
+
+    if preference == "gpu":
+        if cuda_available():
+            return DeviceInfo(device="cuda", compute_type=config.compute_type_gpu, device_name=_gpu_device_name())
+        raise TranscriptionError(
+            "GPU processing was requested but no CUDA-capable GPU was detected on this "
+            "machine. Choose CPU or Auto instead."
+        )
+
+    if cuda_available():
+        return DeviceInfo(device="cuda", compute_type=config.compute_type_gpu, device_name=_gpu_device_name())
     return DeviceInfo(device="cpu", compute_type=config.compute_type_cpu, device_name="CPU")
 
 
@@ -91,16 +112,26 @@ class TranscriptionEngine:
         self._models_dir = models_dir
         self._model = None
         self._device_info: DeviceInfo | None = None
+        self._device_preference: str | None = None
         self._ffmpeg_binary: str | None = None
 
     @property
     def device_info(self) -> DeviceInfo | None:
         return self._device_info
 
-    def ensure_loaded(self, log: Callable[[str], None]) -> DeviceInfo:
-        """Load the model if it has not been loaded yet, returning device info."""
+    def ensure_loaded(self, log: Callable[[str], None], device_preference: str = "auto") -> DeviceInfo:
+        """Load the model if needed, returning device info.
 
-        if self._model is not None and self._device_info is not None:
+        If the model was already loaded under a different ``device_preference``
+        than the one requested now, it is reloaded so the new preference (e.g.
+        switching from GPU to CPU) actually takes effect.
+        """
+
+        if (
+            self._model is not None
+            and self._device_info is not None
+            and self._device_preference == device_preference
+        ):
             return self._device_info
 
         from faster_whisper import WhisperModel
@@ -108,7 +139,8 @@ class TranscriptionEngine:
         from .model_manager import is_model_downloaded
 
         self._ffmpeg_binary = _resolve_ffmpeg_binary()
-        self._device_info = detect_device(self._config.transcription)
+        self._device_info = detect_device(self._config.transcription, device_preference)
+        self._device_preference = device_preference
 
         model_name = self._config.transcription.model_name
         self._models_dir.mkdir(parents=True, exist_ok=True)

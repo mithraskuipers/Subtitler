@@ -6,6 +6,8 @@
     browseBtn: document.getElementById("browse-btn"),
     scanBtn: document.getElementById("scan-btn"),
     languageSelect: document.getElementById("language-select"),
+    deviceSelect: document.getElementById("device-select"),
+    deviceHint: document.getElementById("device-hint"),
     runBtn: document.getElementById("run-btn"),
     stopBtn: document.getElementById("stop-btn"),
     overallProgressFill: document.getElementById("overall-progress-fill"),
@@ -56,6 +58,7 @@
   let renderedLogCount = 0;
   let lastKnownDeviceLabel = null;
   let modelPollTimer = null;
+  let gpuAvailable = true;
 
   function escapeHtml(value) {
     const div = document.createElement("div");
@@ -171,9 +174,13 @@
     els.languageSelect.disabled = running;
     els.selectAllBtn.disabled = running;
     els.selectNoneBtn.disabled = running;
+    els.deviceSelect.disabled = running;
 
     if (document.activeElement !== els.folderInput && state.sourceDirectory) {
       els.folderInput.value = state.sourceDirectory;
+    }
+    if (document.activeElement !== els.deviceSelect && state.devicePreference) {
+      els.deviceSelect.value = state.devicePreference;
     }
   }
 
@@ -384,6 +391,31 @@
 
   els.refreshModelsBtn.addEventListener("click", loadModels);
 
+  async function loadDeviceOptions() {
+    try {
+      const data = await apiCall("/api/device-options");
+      gpuAvailable = !!data.gpuAvailable;
+      els.deviceSelect.innerHTML = data.options
+        .map((opt) => {
+          const disable = opt.value === "gpu" && !gpuAvailable;
+          return `<option value="${opt.value}" ${disable ? "disabled" : ""}>${escapeHtml(opt.label)}${
+            disable ? " — not detected" : ""
+          }</option>`;
+        })
+        .join("");
+      if (latestState && latestState.devicePreference) {
+        els.deviceSelect.value = latestState.devicePreference;
+      }
+      els.deviceHint.textContent = gpuAvailable
+        ? "GPU detected — Auto will use it automatically."
+        : "No CUDA-capable GPU detected on this machine — processing will run on CPU.";
+      els.deviceHint.classList.toggle("warning", !gpuAvailable);
+    } catch (err) {
+      els.deviceSelect.innerHTML = '<option value="auto">Auto (recommended)</option>';
+      appendTransientLog(`Could not load device options: ${err.message}`);
+    }
+  }
+
   // -- event handlers --------------------------------------------------------
   els.browseBtn.addEventListener("click", async () => {
     try {
@@ -435,7 +467,8 @@
   els.runBtn.addEventListener("click", async () => {
     try {
       const languageCode = els.languageSelect.value;
-      const state = await apiCall("/api/start", "POST", { languageCode });
+      const devicePreference = els.deviceSelect.value;
+      const state = await apiCall("/api/start", "POST", { languageCode, devicePreference });
       render(state);
     } catch (err) {
       appendTransientLog(`Could not start batch: ${err.message}`);
@@ -511,6 +544,7 @@
 
   async function bootstrap() {
     await loadLanguages();
+    await loadDeviceOptions();
     await loadModels();
     try {
       const state = await apiCall("/api/state");

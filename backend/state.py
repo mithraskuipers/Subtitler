@@ -31,6 +31,7 @@ class AppState:
         self._status: BatchStatus = BatchStatus.IDLE
         self._source_directory: str | None = None
         self._language_code: str = DEFAULT_LANGUAGE_CODE
+        self._device_preference: str = "auto"
         self._videos: list[VideoFile] = []
         self._current_progress = CurrentVideoProgress()
         self._logs: deque[LogEntry] = deque(maxlen=log_history_limit)
@@ -65,6 +66,15 @@ class AppState:
     def language_code(self) -> str:
         with self._lock:
             return self._language_code
+
+    def set_device_preference(self, device_preference: str) -> None:
+        with self._lock:
+            self._device_preference = device_preference
+
+    @property
+    def device_preference(self) -> str:
+        with self._lock:
+            return self._device_preference
 
     @property
     def source_directory(self) -> str | None:
@@ -161,6 +171,7 @@ class AppState:
                 "status": self._status.value,
                 "sourceDirectory": self._source_directory,
                 "languageCode": self._language_code,
+                "devicePreference": self._device_preference,
                 "videos": [v.to_dict() for v in self._videos],
                 "currentProgress": self._current_progress.to_dict(),
                 "logs": [entry.to_dict() for entry in self._logs],

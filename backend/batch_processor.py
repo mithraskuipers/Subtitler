@@ -57,9 +57,12 @@ class BatchProcessor:
     def is_running(self) -> bool:
         return self._worker_thread is not None and self._worker_thread.is_alive()
 
-    def start(self, language_code: str) -> None:
+    def start(self, language_code: str, device_preference: str = "auto") -> None:
         if self.is_running():
             raise RuntimeError("A batch is already running.")
+
+        if device_preference not in ("auto", "gpu", "cpu"):
+            raise RuntimeError(f"Unknown processing device '{device_preference}'.")
 
         selected = self._state.get_selected_videos()
         if not selected:
@@ -73,6 +76,7 @@ class BatchProcessor:
             )
 
         self._state.set_language(language_code)
+        self._state.set_device_preference(device_preference)
         self._stop_event.clear()
         self._decision_event.clear()
         self._decision_result = None
@@ -139,7 +143,9 @@ class BatchProcessor:
         self._emit()
 
         try:
-            device_info = self._engine.ensure_loaded(lambda msg: self._log(msg))
+            device_info = self._engine.ensure_loaded(
+                lambda msg: self._log(msg), state.device_preference
+            )
             state.set_device_label(f"{device_info.device.upper()} \u2014 {device_info.device_name}")
             self._log(f"Model ready on {device_info.device.upper()} ({device_info.device_name}).", LogLevel.SUCCESS)
             self._emit()
