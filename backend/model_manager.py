@@ -37,10 +37,20 @@ MODEL_REGISTRY: tuple[ModelDefinition, ...] = (
 )
 
 
+# faster-whisper resolves short model names to specific HF repos, and not
+# all of them live under the Systran org (e.g. large-v3-turbo is published
+# by mobiuslabsgmbh). Add an entry here whenever a new model is added to
+# MODEL_REGISTRY above and it isn't hosted under Systran/faster-whisper-<name>.
+_MODEL_REPO_IDS: dict[str, str] = {
+    "large-v3-turbo": "mobiuslabsgmbh/faster-whisper-large-v3-turbo",
+}
+
+
 def _repo_dir_name(model_name: str) -> str:
     """Directory name Hugging Face Hub uses to cache a faster-whisper repo."""
 
-    return f"models--Systran--faster-whisper-{model_name}"
+    repo_id = _MODEL_REPO_IDS.get(model_name, f"Systran/faster-whisper-{model_name}")
+    return f"models--{repo_id.replace('/', '--')}"
 
 
 def is_model_downloaded(model_name: str, models_dir: Path) -> bool:
