@@ -87,6 +87,24 @@ def detect_device(config: TranscriptionConfig, preference: str = "auto") -> Devi
     return DeviceInfo(device="cpu", compute_type=config.compute_type_cpu, device_name="CPU")
 
 
+def looks_like_missing_cuda_library(exc: Exception) -> bool:
+    """Whether ``exc`` looks like a missing cuBLAS/cuDNN/CUDA runtime DLL.
+
+    ctranslate2 can report a CUDA-capable device is present (``cuda_available``
+    just asks the driver how many devices exist) and still fail to actually
+    load the model because the separate cuBLAS/cuDNN runtime libraries aren't
+    on the system - a very common gap when only the NVIDIA display driver was
+    installed. Distinguishing this from other load failures lets the caller
+    fall back to CPU (or explain what's missing) instead of just crashing.
+    """
+
+    message = str(exc).lower()
+    return any(
+        token in message
+        for token in ("cublas", "cudnn", "is not found or cannot be loaded", ".dll", "libcu")
+    )
+
+
 def _resolve_ffmpeg_binary() -> str:
     system_ffmpeg = shutil.which("ffmpeg")
     if system_ffmpeg:
@@ -139,8 +157,7 @@ class TranscriptionEngine:
         from .model_manager import is_model_downloaded
 
         self._ffmpeg_binary = _resolve_ffmpeg_binary()
-        self._device_info = detect_device(self._config.transcription, device_preference)
-        self._device_preference = device_preference
+        device_info = detect_device(self._config.transcription, device_preference)
 
         model_name = self._config.transcription.model_name
         self._models_dir.mkdir(parents=True, exist_ok=True)
@@ -151,20 +168,55 @@ class TranscriptionEngine:
                 "Models panel before running a batch."
             )
 
-        log(
-            f"Loading model '{model_name}' on "
-            f"{self._device_info.device.upper()} ({self._device_info.device_name})"
-        )
-        # local_files_only guarantees this never silently reaches out to the
-        # network - loading only ever uses what was explicitly downloaded.
-        self._model = WhisperModel(
-            model_name,
-            device=self._device_info.device,
-            compute_type=self._device_info.compute_type,
-            download_root=str(self._models_dir),
-            local_files_only=True,
-        )
+        def _load(info: DeviceInfo) -> "WhisperModel":
+            log(f"Loading model '{model_name}' on {info.device.upper()} ({info.device_name})")
+            # local_files_only guarantees this never silently reaches out to
+            # the network - loading only ever uses what was explicitly
+            # downloaded.
+            return WhisperModel(
+                model_name,
+                device=info.device,
+                compute_type=info.compute_type,
+                download_root=str(self._models_dir),
+                local_files_only=True,
+            )
 
+        try:
+            model = _load(device_info)
+        except Exception as exc:
+            if device_info.device == "cuda" and looks_like_missing_cuda_library(exc):
+                if device_preference == "gpu":
+                    # The user explicitly forced GPU - don't silently fall
+                    # back, but explain what's actually missing. Having the
+                    # NVIDIA display driver installed is not the same thing
+                    # as having the cuBLAS/cuDNN runtime DLLs ctranslate2
+                    # needs, and that's the near-universal cause of this.
+                    raise TranscriptionError(
+                        "GPU processing failed to load a required CUDA runtime library "
+                        f"({exc}). Having the NVIDIA driver installed is not enough - "
+                        "ctranslate2 also needs the cuBLAS and cuDNN runtime DLLs. Try "
+                        "'pip install nvidia-cublas-cu12 nvidia-cudnn-cu12' in the same "
+                        "environment Subtitler runs in, then restart it. Or choose CPU "
+                        "or Auto instead."
+                    ) from exc
+
+                log(
+                    f"GPU processing failed to load a required CUDA runtime library ({exc}). "
+                    "Falling back to CPU for this batch. Run 'pip install nvidia-cublas-cu12 "
+                    "nvidia-cudnn-cu12' to enable GPU processing."
+                )
+                device_info = DeviceInfo(
+                    device="cpu",
+                    compute_type=self._config.transcription.compute_type_cpu,
+                    device_name="CPU",
+                )
+                model = _load(device_info)
+            else:
+                raise TranscriptionError(f"Failed to load the transcription model: {exc}") from exc
+
+        self._model = model
+        self._device_info = device_info
+        self._device_preference = device_preference
         return self._device_info
 
     def extract_audio(self, video_path: str) -> Path:

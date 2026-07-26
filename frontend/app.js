@@ -330,20 +330,39 @@
       .map((model) => {
         const languages = model.languages.join(", ").toUpperCase();
         let actionHtml;
+        let progressHtml = "";
         if (model.installed) {
           actionHtml = '<span class="model-badge installed">Downloaded</span>';
         } else if (model.downloading) {
-          actionHtml = '<span class="model-badge downloading">Downloading…</span>';
+          const progress = model.downloadProgress;
+          const percent = progress && progress.percent != null ? progress.percent : null;
+          actionHtml = `<span class="model-badge downloading">${percent != null ? `${percent.toFixed(0)}%` : "Downloading…"}</span>`;
+          if (progress) {
+            const downloadedMb = progress.downloadedBytes / (1024 * 1024);
+            const totalMb = progress.totalBytes / (1024 * 1024);
+            const label =
+              percent != null
+                ? `${downloadedMb.toFixed(0)} / ${totalMb.toFixed(0)} MB`
+                : `${downloadedMb.toFixed(0)} MB downloaded`;
+            progressHtml = `
+              <div class="model-progress-track">
+                <div class="model-progress-fill" style="width: ${percent != null ? percent : 4}%"></div>
+              </div>
+              <span class="model-progress-label">${label}</span>`;
+          }
         } else {
           actionHtml = `<button class="btn btn-tiny model-download-btn" data-model-name="${escapeHtml(model.name)}" type="button">Download</button>`;
         }
         return `
           <div class="model-row">
-            <div class="model-row-text">
-              <span class="model-row-label" title="${escapeHtml(model.label)}">${escapeHtml(model.label)}</span>
-              <span class="model-row-meta">${languages} · ~${model.approxSizeMb} MB</span>
+            <div class="model-row-main">
+              <div class="model-row-text">
+                <span class="model-row-label" title="${escapeHtml(model.label)}">${escapeHtml(model.label)}</span>
+                <span class="model-row-meta">${languages} · ~${model.approxSizeMb} MB</span>
+              </div>
+              ${actionHtml}
             </div>
-            ${actionHtml}
+            ${progressHtml}
           </div>`;
       })
       .join("");
@@ -374,7 +393,7 @@
         clearInterval(modelPollTimer);
         modelPollTimer = null;
       }
-    }, 2000);
+    }, 800);
   }
 
   async function loadModels() {

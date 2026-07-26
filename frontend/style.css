@@ -316,13 +316,19 @@ button, input, select {
 
 .model-row {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
+  flex-direction: column;
+  gap: 6px;
   background: var(--bg-panel);
   border: 1px solid var(--border-soft);
   border-radius: var(--radius-sm);
   padding: 8px 10px;
+}
+
+.model-row-main {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
 }
 
 .model-row-text { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
@@ -353,6 +359,26 @@ button, input, select {
 .model-badge.installed { background: var(--teal-dim); color: var(--teal); }
 .model-badge.missing { background: var(--bg-panel-alt); color: var(--text-muted); }
 .model-badge.downloading { background: var(--accent-dim); color: var(--accent-strong); }
+
+.model-progress-track {
+  width: 100%;
+  height: 5px;
+  border-radius: 999px;
+  background: var(--bg-panel-alt);
+  overflow: hidden;
+}
+.model-progress-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--accent), var(--accent-strong));
+  transition: width 0.4s ease;
+}
+.model-progress-label {
+  font-size: 10px;
+  font-family: var(--font-mono);
+  color: var(--text-muted);
+  letter-spacing: 0.02em;
+}
 
 /* ---------------------------------------------------------------------- *
  * Main panel (right column)

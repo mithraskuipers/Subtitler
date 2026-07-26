@@ -26,7 +26,7 @@ from .models import (
 )
 from .state import AppState
 from .subtitle_writer import SubtitleSegment, subtitle_path_for_video, write_srt_file
-from .transcription_engine import TranscriptionEngine, TranscriptionError
+from .transcription_engine import TranscriptionEngine, TranscriptionError, looks_like_missing_cuda_library
 from .websocket_manager import ConnectionManager
 
 
@@ -201,6 +201,32 @@ class BatchProcessor:
         state.set_status(BatchStatus.FINISHED if not interrupted else BatchStatus.IDLE)
         self._emit()
 
+    def _is_recoverable_cuda_failure(self, exc: Exception) -> bool:
+        """Whether ``exc`` is a cuBLAS/cuDNN load failure we can recover from.
+
+        ctranslate2 only loads the CUDA runtime libraries lazily, on the
+        first actual inference - not when the model object is constructed.
+        That means a missing cuBLAS/cuDNN DLL surfaces here, mid-video, not
+        while the model was being loaded, so this is the one place that
+        actually needs to catch and react to it.
+        """
+
+        device_info = self._engine.device_info
+        return bool(device_info and device_info.device == "cuda" and looks_like_missing_cuda_library(exc))
+
+    def _fall_back_to_cpu(self, exc: Exception) -> None:
+        self._log(
+            f"GPU inference failed to load a required CUDA runtime library ({exc}). "
+            "Reloading the model on CPU and retrying this video. Run "
+            "'pip install nvidia-cublas-cu12 nvidia-cudnn-cu12' in the same environment "
+            "Subtitler runs in to enable GPU processing instead.",
+            LogLevel.WARNING,
+        )
+        self._engine.ensure_loaded(lambda msg: self._log(msg), "cpu")
+        self._state.set_device_preference("cpu")
+        self._state.set_device_label("CPU \u2014 CPU")
+        self._emit()
+
     def _process_single_video(self, video, language_code: str) -> str:
         """Returns one of: 'done', 'failed', 'interrupted'."""
 
@@ -209,50 +235,61 @@ class BatchProcessor:
         state.update_video(video.id, status=VideoStatus.PROCESSING, error_message=None)
         started_at = time.time()
         self._log(f"Processing '{video.relative_path}'", LogLevel.INFO)
-        self._set_progress(video.id, video.filename, ProcessingStage.EXTRACTING_AUDIO, 0.05, started_at)
 
-        audio_path: Path | None = None
-        try:
-            audio_path = self._engine.extract_audio(video.absolute_path)
-            self._set_progress(video.id, video.filename, ProcessingStage.TRANSCRIBING, 0.15, started_at)
+        attempts_remaining = 2
+        while True:
+            self._set_progress(video.id, video.filename, ProcessingStage.EXTRACTING_AUDIO, 0.05, started_at)
 
-            segments: list[SubtitleSegment] = []
-            for segment in self._engine.transcribe(audio_path, language_code, self._should_stop):
-                segments.append(segment)
-                fraction = min(0.15 + segment.end_seconds / 3600.0, 0.9)
-                self._set_progress(video.id, video.filename, ProcessingStage.TRANSCRIBING, fraction, started_at)
+            audio_path: Path | None = None
+            try:
+                audio_path = self._engine.extract_audio(video.absolute_path)
+                self._set_progress(video.id, video.filename, ProcessingStage.TRANSCRIBING, 0.15, started_at)
 
-            destination = subtitle_path_for_video(video.absolute_path, self._config)
+                segments: list[SubtitleSegment] = []
+                for segment in self._engine.transcribe(audio_path, language_code, self._should_stop):
+                    segments.append(segment)
+                    fraction = min(0.15 + segment.end_seconds / 3600.0, 0.9)
+                    self._set_progress(video.id, video.filename, ProcessingStage.TRANSCRIBING, fraction, started_at)
 
-            if self._should_stop():
-                return self._handle_interruption(video, segments, destination)
+                destination = subtitle_path_for_video(video.absolute_path, self._config)
 
-            self._set_progress(video.id, video.filename, ProcessingStage.GENERATING_SUBTITLES, 0.92, started_at)
-            self._set_progress(video.id, video.filename, ProcessingStage.SAVING, 0.97, started_at)
-            write_srt_file(segments, destination)
+                if self._should_stop():
+                    return self._handle_interruption(video, segments, destination)
 
-            video.status = VideoStatus.DONE
-            video.subtitle_path = str(destination)
-            state.update_video(video.id, status=VideoStatus.DONE, subtitle_path=str(destination))
-            self._set_progress(video.id, video.filename, ProcessingStage.FINISHED, 1.0, started_at)
-            self._log(f"Saved subtitles to '{destination.name}'", LogLevel.SUCCESS)
-            return "done"
+                self._set_progress(video.id, video.filename, ProcessingStage.GENERATING_SUBTITLES, 0.92, started_at)
+                self._set_progress(video.id, video.filename, ProcessingStage.SAVING, 0.97, started_at)
+                write_srt_file(segments, destination)
 
-        except TranscriptionError as exc:
-            video.status = VideoStatus.FAILED
-            video.error_message = str(exc)
-            state.update_video(video.id, status=VideoStatus.FAILED, error_message=str(exc))
-            self._log(f"Failed '{video.relative_path}': {exc}", LogLevel.ERROR)
-            return "failed"
-        except Exception as exc:  # noqa: BLE001 - surface any unexpected error per-video
-            video.status = VideoStatus.FAILED
-            video.error_message = str(exc)
-            state.update_video(video.id, status=VideoStatus.FAILED, error_message=str(exc))
-            self._log(f"Unexpected error on '{video.relative_path}': {exc}", LogLevel.ERROR)
-            return "failed"
-        finally:
-            if audio_path is not None:
-                self._engine.cleanup_audio(audio_path)
+                video.status = VideoStatus.DONE
+                video.subtitle_path = str(destination)
+                state.update_video(video.id, status=VideoStatus.DONE, subtitle_path=str(destination))
+                self._set_progress(video.id, video.filename, ProcessingStage.FINISHED, 1.0, started_at)
+                self._log(f"Saved subtitles to '{destination.name}'", LogLevel.SUCCESS)
+                return "done"
+
+            except TranscriptionError as exc:
+                if attempts_remaining > 1 and self._is_recoverable_cuda_failure(exc):
+                    attempts_remaining -= 1
+                    self._fall_back_to_cpu(exc)
+                    continue
+                video.status = VideoStatus.FAILED
+                video.error_message = str(exc)
+                state.update_video(video.id, status=VideoStatus.FAILED, error_message=str(exc))
+                self._log(f"Failed '{video.relative_path}': {exc}", LogLevel.ERROR)
+                return "failed"
+            except Exception as exc:  # noqa: BLE001 - surface any unexpected error per-video
+                if attempts_remaining > 1 and self._is_recoverable_cuda_failure(exc):
+                    attempts_remaining -= 1
+                    self._fall_back_to_cpu(exc)
+                    continue
+                video.status = VideoStatus.FAILED
+                video.error_message = str(exc)
+                state.update_video(video.id, status=VideoStatus.FAILED, error_message=str(exc))
+                self._log(f"Unexpected error on '{video.relative_path}': {exc}", LogLevel.ERROR)
+                return "failed"
+            finally:
+                if audio_path is not None:
+                    self._engine.cleanup_audio(audio_path)
 
     def _handle_interruption(self, video, segments: list[SubtitleSegment], destination: Path) -> str:
         state = self._state
